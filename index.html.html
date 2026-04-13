@@ -116,6 +116,41 @@ const defaultAgents=[
 ];
 const STORAGE_KEY='jaidah_roster_v18';
 
+// ── Cloud sync: read from JSONBin ──
+function getBinId(){
+  var p=new URLSearchParams(window.location.search);
+  var b=p.get('bin');
+  if(b){ localStorage.setItem('jaidah_bin_id',b); return b; }
+  return localStorage.getItem('jaidah_bin_id')||'';
+}
+
+function pullFromCloud(cb){
+  var binId=getBinId();
+  if(!binId){ cb(null); return; }
+  // Public bin - no API key needed for reading
+  fetch('https://api.jsonbin.io/v3/b/'+binId+'/latest')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(data && data.record){
+        cb(data.record);
+      } else {
+        cb(null);
+      }
+    })
+    .catch(function(){ cb(null); });
+}
+
+function applyCloudState(cloudState){
+  if(!cloudState) return false;
+  if(!cloudState.agents) cloudState.agents=JSON.parse(JSON.stringify(defaultAgents));
+  if(!cloudState.leaves) cloudState.leaves=[];
+  if(!cloudState.weekOverrides) cloudState.weekOverrides={};
+  if(!cloudState.breakOverrides) cloudState.breakOverrides={};
+  if(!cloudState.month) cloudState.month=todayMonth();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudState));
+  return true;
+}
+
 const breakTemplates={
 1:[['09:45-10:00','12:00-12:30','15:00-15:15'],['10:00-10:15','12:30-13:00','15:15-15:30'],['10:15-10:30','13:00-13:30','15:30-15:45'],['10:30-10:45','13:30-14:00','15:45-16:00']],
 2:[['10:15-10:30','12:30-13:00','15:30-15:45'],['10:30-10:45','13:00-13:30','15:45-16:00'],['10:45-11:00','13:30-14:00','16:00-16:15'],['11:00-11:15','14:00-14:30','16:15-16:30']]
@@ -240,14 +275,30 @@ var curAgent = 0;
 var curMon = todayMonth();
 var curWk = 0;
 
-function init(){
+function populatePicker(){
   var sel = document.getElementById('agSel');
+  sel.innerHTML = '<option value="">-- Select your name --</option>';
   var agents = st.agents.filter(function(a){ return a.active; });
   agents.forEach(function(a){
     var o = document.createElement('option');
     o.value = a.id;
     o.textContent = a.name + ' (Shift ' + a.shift + ' - ' + (a.shift===1?'08:00-17:30':'09:30-19:00') + ')';
     sel.appendChild(o);
+  });
+}
+
+function init(){
+  pullFromCloud(function(cloudState){
+    if(applyCloudState(cloudState)){
+      st = loadState();
+      state = st;
+    }
+    populatePicker();
+    // Show warning if no bin configured
+    if(!getBinId()){
+      var hint = document.querySelector('.phint');
+      if(hint) hint.innerHTML += '<br><br><strong style="color:#92400e">Not connected to cloud. Ask your manager for the correct link.</strong>';
+    }
   });
 }
 
@@ -316,6 +367,7 @@ function nextW(){
 function draw(){
   st = loadState();
   state = st;
+  // Always use latest localStorage (updated by cloud pull)
   var agent = st.agents.find(function(a){ return a.id===curAgent; });
   if(!agent) return;
   var info = getMonthInfo(curMon);
@@ -386,7 +438,17 @@ function draw(){
   } else document.getElementById('leaveDiv').innerHTML='';
 }
 
-setInterval(function(){ if(curAgent){ st=loadState(); draw(); } },60000);
+// Auto-refresh from cloud every 30 seconds
+setInterval(function(){
+  pullFromCloud(function(cloudState){
+    if(applyCloudState(cloudState)){
+      st = loadState();
+      state = st;
+    }
+    if(curAgent) draw();
+  });
+}, 30000);
+
 init();
 </script>
 </body>
